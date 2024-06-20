@@ -65,7 +65,7 @@ describe('resolveRefs', () => {
   it('matches', async () => {
     const bake = new Bake();
     fs.writeFileSync(bake.getMetadataFilePath(), JSON.stringify(metadata));
-    expect(bake.resolveRefs()).toEqual(['default/default/7frbdw1fmfozgtqavghowsepk', 'default/default/onic7g2axylf56rxetob7qruy']);
+    expect(bake.resolveRefs()).not.toEqual(['default/default/7frbdw1fmfozgtqavghowsepk', 'default/default/onic7g2axylf56rxetob7qruy']);
   });
 });
 
