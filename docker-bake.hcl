@@ -95,3 +95,9 @@ target "license-update" {
   target = "update"
   output = ["."]
 }
+
+target "protogen" {
+  dockerfile = "./hack/dockerfiles/protogen.Dockerfile"
+  target = "update"
+  output = ["./src/types/protogen"]
+}
