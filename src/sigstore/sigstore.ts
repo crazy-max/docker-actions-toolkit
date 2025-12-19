@@ -129,11 +129,21 @@ export class Sigstore {
 
   public async verifySignedManifests(opts: VerifySignedManifestsOpts, signed: Record<string, SignAttestationManifestsResult>): Promise<Record<string, VerifySignedManifestsResult>> {
     const result: Record<string, VerifySignedManifestsResult> = {};
-    const retries = opts.retries ?? 15;
+    const retries = opts.retries ?? 20;
 
     if (!(await this.cosign.isAvailable())) {
       throw new Error('Cosign is required to verify signed manifests');
     }
+
+    const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+    const computeBackoffDelay = (attempt: number): number => {
+      const baseDelayMs = 200; // initial delay (ms)
+      const maxDelayMs = 10_000; // cap delay at 10s
+      const jitterFactor = 0.2; // 20% jitter
+      const expDelay = Math.min(baseDelayMs * 2 ** attempt, maxDelayMs);
+      const jitter = expDelay * jitterFactor * (Math.random() * 2 - 1); // +/- jitterFactor
+      return Math.max(0, Math.round(expDelay + jitter));
+    };
 
     let lastError: Error | undefined;
     for (const [attestationRef, signedRes] of Object.entries(signed)) {
@@ -146,10 +156,12 @@ export class Sigstore {
           '--certificate-oidc-issuer', 'https://token.actions.githubusercontent.com',
           '--certificate-identity-regexp', opts.certificateIdentityRegexp
         ];
+
         if (!signedRes.tlogID) {
           // skip tlog verification but still verify the signed timestamp
           cosignArgs.push('--use-signed-timestamps', '--insecure-ignore-tlog');
         }
+
         core.info(`[command]cosign ${[...cosignArgs, attestationRef].join(' ')}`);
         for (let attempt = 0; attempt < retries; attempt++) {
           const execRes = await Exec.getExecOutput('cosign', ['--verbose', ...cosignArgs, attestationRef], {
@@ -159,7 +171,9 @@ export class Sigstore {
               COSIGN_EXPERIMENTAL: '1'
             }) as {[key: string]: string}
           });
+
           const verifyResult = Cosign.parseCommandOutput(execRes.stderr.trim());
+
           if (execRes.exitCode === 0) {
             result[attestationRef] = {
               cosignArgs: cosignArgs,
@@ -168,19 +182,20 @@ export class Sigstore {
             lastError = undefined;
             core.info(`Signature manifest verified: https://oci.dag.dev/?image=${signedRes.imageName}@${verifyResult.signatureManifestDigest}`);
             break;
-          } else {
-            if (verifyResult.errors && verifyResult.errors.length > 0) {
-              const errorMessages = verifyResult.errors.map(e => `- [${e.code}] ${e.message} : ${e.detail}`).join('\n');
-              lastError = new Error(`Cosign verify command failed with errors:\n${errorMessages}`);
-              if (verifyResult.errors.some(e => e.code === 'MANIFEST_UNKNOWN')) {
-                core.info(`Cosign verify command failed with MANIFEST_UNKNOWN, retrying attempt ${attempt + 1}/${retries}...\n${errorMessages}`);
-                await new Promise(res => setTimeout(res, Math.pow(2, attempt) * 100));
-              } else {
-                throw lastError;
-              }
+          }
+
+          if (verifyResult.errors && verifyResult.errors.length > 0) {
+            const errorMessages = verifyResult.errors.map(e => `- [${e.code}] ${e.message} : ${e.detail}`).join('\n');
+            lastError = new Error(`Cosign verify command failed with errors:\n${errorMessages}`);
+            if (verifyResult.errors.some(e => e.code === 'MANIFEST_UNKNOWN')) {
+              const delay = computeBackoffDelay(attempt);
+              core.info(`Cosign verify command failed with MANIFEST_UNKNOWN, retrying attempt ${attempt + 1}/${retries} in ${delay}ms...\n${errorMessages}`);
+              await sleep(delay);
             } else {
-              throw new Error(`Cosign verify command failed: ${execRes.stderr}`);
+              throw lastError;
             }
+          } else {
+            throw new Error(`Cosign verify command failed: ${execRes.stderr}`);
           }
         }
       });
