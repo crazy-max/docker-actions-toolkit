@@ -12,13 +12,13 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@actions/artifact@npm:^5.0.3":
-  version: 5.0.3
-  resolution: "@actions/artifact@npm:5.0.3"
+"@actions/artifact@file:../toolkit/packages/artifact/actions-artifact-v5.0.2.tgz::locator=%40docker%2Factions-toolkit%40workspace%3A.":
+  version: 5.0.2
+  resolution: "@actions/artifact@file:../toolkit/packages/artifact/actions-artifact-v5.0.2.tgz#../toolkit/packages/artifact/actions-artifact-v5.0.2.tgz::hash=bfd85d&locator=%40docker%2Factions-toolkit%40workspace%3A."
   dependencies:
     "@actions/core": "npm:^2.0.0"
     "@actions/github": "npm:^6.0.1"
-    "@actions/http-client": "npm:^3.0.2"
+    "@actions/http-client": "npm:^3.0.1"
     "@azure/storage-blob": "npm:^12.29.1"
     "@octokit/core": "npm:^5.2.1"
     "@octokit/plugin-request-log": "npm:^1.0.4"
@@ -29,7 +29,7 @@ __metadata:
     archiver: "npm:^7.0.1"
     jwt-decode: "npm:^3.1.2"
     unzip-stream: "npm:^0.3.1"
-  checksum: 10/eda1744afabd3bb7ab7010acd732ad3d6411002d8176a58f4c210a22f4a8fdb396225228fd8c81b30b86aaed2dc7b279fe22a44ae71220540fbaaa4fd117c2a6
+  checksum: 10/cc5b546b28750b96075a12219f0a1a0dfe52b9046cd2ab56dce98246b48ee5dbf17868d0f0a227d256bdcfa92fdbc8748577c5eea3ba2b4b661141d994813e0c
   languageName: node
   linkType: hard
 
@@ -148,7 +148,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@actions/http-client@npm:^3.0.2":
+"@actions/http-client@npm:^3.0.1, @actions/http-client@npm:^3.0.2":
   version: 3.0.2
   resolution: "@actions/http-client@npm:3.0.2"
   dependencies:
@@ -1232,7 +1232,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@docker/actions-toolkit@workspace:."
   dependencies:
-    "@actions/artifact": "npm:^5.0.3"
+    "@actions/artifact": ../toolkit/packages/artifact/actions-artifact-v5.0.2.tgz
     "@actions/cache": "npm:^6.0.0"
     "@actions/core": "npm:^3.0.0"
     "@actions/exec": "npm:^3.0.0"
@@ -1240,7 +1240,6 @@ __metadata:
     "@actions/http-client": "npm:^4.0.0"
     "@actions/io": "npm:^3.0.2"
     "@actions/tool-cache": "npm:^4.0.0"
-    "@azure/storage-blob": "npm:^12.30.0"
     "@eslint/compat": "npm:^2.0.0"
     "@eslint/eslintrc": "npm:^3.3.3"
     "@eslint/js": "npm:^9.39.2"

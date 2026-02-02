@@ -14,23 +14,16 @@
  * limitations under the License.
  */
 
-import crypto from 'crypto';
 import fs from 'fs';
 import he from 'he';
 import {dump as yamldump} from 'js-yaml';
 import os from 'os';
 import path from 'path';
-import {CreateArtifactRequest, FinalizeArtifactRequest, StringValue} from '@actions/artifact/lib/generated';
-import {internalArtifactTwirpClient} from '@actions/artifact/lib/internal/shared/artifact-twirp-client';
 import {isGhes} from '@actions/artifact/lib/internal/shared/config';
-import {getBackendIdsFromToken} from '@actions/artifact/lib/internal/shared/util';
-import {getExpiration} from '@actions/artifact/lib/internal/upload/retention';
-import {InvalidResponseError, NetworkError} from '@actions/artifact';
+import {DefaultArtifactClient, InvalidResponseError, NetworkError} from '@actions/artifact';
 import * as core from '@actions/core';
 import * as github from '@actions/github';
 import * as httpm from '@actions/http-client';
-import {TransferProgressEvent} from '@azure/core-rest-pipeline';
-import {BlobClient, BlobHTTPHeaders} from '@azure/storage-blob';
 import {jwtDecode, JwtPayload} from 'jwt-decode';
 
 import {Util} from './util.js';
@@ -168,92 +161,36 @@ export class GitHub {
     }
 
     const artifactName = path.basename(opts.filename);
-    const backendIds = getBackendIdsFromToken();
-    const artifactClient = internalArtifactTwirpClient();
-
-    core.info(`Uploading ${artifactName} to blob storage`);
-
-    const createArtifactReq: CreateArtifactRequest = {
-      workflowRunBackendId: backendIds.workflowRunBackendId,
-      workflowJobRunBackendId: backendIds.workflowJobRunBackendId,
-      name: artifactName,
-      version: 4
-    };
-
-    const expiresAt = getExpiration(opts?.retentionDays);
-    if (expiresAt) {
-      createArtifactReq.expiresAt = expiresAt;
-    }
-
-    const createArtifactResp = await artifactClient.CreateArtifact(createArtifactReq);
-    if (!createArtifactResp.ok) {
-      throw new InvalidResponseError('cannot create artifact client');
-    }
-
-    let uploadByteCount = 0;
-    const blobClient = new BlobClient(createArtifactResp.signedUploadUrl);
-    const blockBlobClient = blobClient.getBlockBlobClient();
-
-    const headers: BlobHTTPHeaders = {
-      blobContentDisposition: `attachment; filename="${artifactName}"`
-    };
-    if (opts.mimeType) {
-      headers.blobContentType = opts.mimeType;
-    }
-    core.debug(`Upload headers: ${JSON.stringify(headers)}`);
+    const artifactClient = new DefaultArtifactClient();
 
     try {
-      core.info('Beginning upload of artifact content to blob storage');
-      await blockBlobClient.uploadFile(opts.filename, {
-        blobHTTPHeaders: headers,
-        onProgress: (progress: TransferProgressEvent): void => {
-          core.info(`Uploaded bytes ${progress.loadedBytes}`);
-          uploadByteCount = progress.loadedBytes;
-        }
+      core.info(`Uploading ${artifactName} as an artifact`);
+      const rootDirectory = path.dirname(opts.filename);
+      const response = await artifactClient.uploadArtifact(artifactName, [opts.filename], rootDirectory, {
+        retentionDays: opts.retentionDays,
+        skipArchive: true,
+        contentType: opts.mimeType
       });
+      if (!response.id) {
+        throw new InvalidResponseError('Cannot upload artifact');
+      }
+
+      const size = response.size ?? fs.statSync(opts.filename).size;
+      const artifactURL = `${GitHub.workflowRunURL()}/artifacts/${response.id}`;
+      core.info(`Artifact download URL: ${artifactURL}`);
+
+      return {
+        id: response.id,
+        filename: artifactName,
+        size,
+        url: artifactURL
+      };
     } catch (error) {
       if (NetworkError.isNetworkErrorCode(error?.code)) {
         throw new NetworkError(error?.code);
       }
       throw error;
     }
-
-    core.info('Finished uploading artifact content to blob storage!');
-
-    const sha256Hash = crypto.createHash('sha256').update(fs.readFileSync(opts.filename)).digest('hex');
-    core.info(`SHA256 hash of uploaded artifact is ${sha256Hash}`);
-
-    const finalizeArtifactReq: FinalizeArtifactRequest = {
-      workflowRunBackendId: backendIds.workflowRunBackendId,
-      workflowJobRunBackendId: backendIds.workflowJobRunBackendId,
-      name: artifactName,
-      size: uploadByteCount ? uploadByteCount.toString() : '0'
-    };
-
-    if (sha256Hash) {
-      finalizeArtifactReq.hash = StringValue.create({
-        value: `sha256:${sha256Hash}`
-      });
-    }
-
-    core.info(`Finalizing artifact upload`);
-    const finalizeArtifactResp = await artifactClient.FinalizeArtifact(finalizeArtifactReq);
-    if (!finalizeArtifactResp.ok) {
-      throw new InvalidResponseError('Cannot finalize artifact upload');
-    }
-
-    const artifactId = BigInt(finalizeArtifactResp.artifactId);
-    core.info(`Artifact successfully finalized (${artifactId})`);
-
-    const artifactURL = `${GitHub.workflowRunURL()}/artifacts/${artifactId}`;
-    core.info(`Artifact download URL: ${artifactURL}`);
-
-    return {
-      id: Number(artifactId),
-      filename: artifactName,
-      size: uploadByteCount,
-      url: artifactURL
-    };
   }
 
   public static async writeBuildSummary(opts: BuildSummaryOpts): Promise<void> {
