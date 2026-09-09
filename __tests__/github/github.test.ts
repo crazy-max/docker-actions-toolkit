@@ -272,6 +272,47 @@ describe('actionsRuntimeToken', () => {
   });
 });
 
+describe('printUntrusted', () => {
+  afterEach(() => {
+    vi.mocked(core.info).mockReset();
+  });
+
+  test.each([
+    {name: 'plain text', message: 'build metadata'},
+    {name: 'empty text', message: ''},
+    {name: 'workflow commands', message: 'commit message\n##[error]not a real error\n##[stop-commands]attacker-token\n::warning::not a real warning'},
+    {name: 'JSON metadata', message: JSON.stringify({message: 'commit message\n##[error]not a real error'}, null, 2)}
+  ])('prints $name unchanged with commands suspended', ({message}) => {
+    GitHub.printUntrusted(message);
+    const calls = vi.mocked(core.info).mock.calls;
+    const token = calls[0][0].slice('::stop-commands::'.length);
+    expect(token).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(calls).toEqual([[`::stop-commands::${token}`], [message], [`::${token}::`]]);
+  });
+
+  it('uses a new token for each call', () => {
+    GitHub.printUntrusted('first');
+    GitHub.printUntrusted('second');
+    const calls = vi.mocked(core.info).mock.calls;
+    expect(calls).toHaveLength(6);
+    expect(calls[0][0]).not.toBe(calls[3][0]);
+  });
+
+  it('resumes commands and propagates the error if printing throws', () => {
+    const error = new Error('log write failed');
+    vi.mocked(core.info)
+      .mockImplementationOnce(() => {})
+      .mockImplementationOnce(() => {
+        throw error;
+      });
+
+    expect(() => GitHub.printUntrusted('metadata')).toThrow(error);
+    const calls = vi.mocked(core.info).mock.calls;
+    const token = calls[0][0].slice('::stop-commands::'.length);
+    expect(calls).toEqual([[`::stop-commands::${token}`], ['metadata'], [`::${token}::`]]);
+  });
+});
+
 describe('printActionsRuntimeTokenACs', () => {
   const originalEnv = process.env;
   beforeEach(() => {
