@@ -59,9 +59,11 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
+            const path = require('path');
             await core.group(`Install npm deps`, async () => {
               await exec.exec('npm', [
                 'install',
+                '--prefix', path.join(process.env.RUNNER_TEMP, 'update-deps'),
                 '--loglevel=error',
                 '--no-save',
                 '--package-lock=false',
@@ -83,7 +85,7 @@ jobs:
           script: |
             const fs = require('fs');
             const path = require('path');
-            const semver = require('semver');
+            const semver = require(path.join(process.env.RUNNER_TEMP, 'update-deps', 'node_modules', 'semver'));
 
             const dep = core.getInput('dep');
 
