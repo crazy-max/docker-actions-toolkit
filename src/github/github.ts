@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import * as crypto from 'crypto';
 import * as core from '@actions/core';
 import * as github from '@actions/github';
 import * as httpm from '@actions/http-client';
@@ -145,6 +146,16 @@ export class GitHub {
   static get actionsRuntimeToken(): GitHubActionsRuntimeToken | undefined {
     const token = process.env['ACTIONS_RUNTIME_TOKEN'] || '';
     return token ? (jwtDecode<JwtPayload>(token) as GitHubActionsRuntimeToken) : undefined;
+  }
+
+  public static printUntrusted(message: string): void {
+    const token = crypto.randomUUID();
+    core.info(`::stop-commands::${token}`); // https://github.com/actions/runner/blob/602c0085328df8cb595fc2641d69f640a11377a4/src/Runner.Worker/ActionCommandManager.cs#L108-L124
+    try {
+      core.info(message);
+    } finally {
+      core.info(`::${token}::`);
+    }
   }
 
   public static async printActionsRuntimeTokenACs() {
