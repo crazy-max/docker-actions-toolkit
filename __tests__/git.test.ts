@@ -18,7 +18,7 @@ import {execFileSync} from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import {beforeEach, describe, expect, it, vi} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 
 import {Git} from '../src/git.js';
 import {Exec} from '../src/exec.js';
@@ -89,6 +89,70 @@ describe('context', () => {
 
     await expect(Git.context()).rejects.toThrow('fatal: failed to read refs');
   });
+});
+
+describe('working directory', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    // Keep the fixture on the same drive as cwd so relative paths work on Windows.
+    tmpDir = fs.mkdtempSync(path.join(process.cwd(), 'git-directory-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, {recursive: true, force: true});
+  });
+
+  it.each(['absolute', 'relative'])(
+    'reads the selected checkout (%s path)',
+    async pathType => {
+      const checkoutDir = path.join(tmpDir, 'nested checkout');
+      const cwd = pathType === 'relative' ? path.relative(process.cwd(), checkoutDir) : checkoutDir;
+      const commitDate = '2024-01-02T03:04:05Z';
+      const git = (args: string[]) =>
+        execFileSync('git', ['-C', checkoutDir, ...args], {
+          encoding: 'utf8',
+          stdio: 'pipe',
+          env: {...process.env, GIT_AUTHOR_DATE: commitDate, GIT_COMMITTER_DATE: commitDate}
+        }).trim();
+      const commit = (message: string) => git(['-c', 'user.name=Test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-m', message]);
+
+      fs.mkdirSync(checkoutDir);
+      git(['init', '--initial-branch=test']);
+      commit('initial');
+      git(['tag', 'v1.0.0']);
+      git(['remote', 'add', 'origin', 'https://example.com/selected-repo.git']);
+      const sha = git(['rev-parse', 'HEAD']);
+
+      expect(await Git.isInsideWorkTree(cwd)).toEqual(true);
+      expect(await Git.remoteURL(cwd)).toEqual('https://example.com/selected-repo.git');
+      expect(await Git.context(cwd)).toMatchObject({ref: 'refs/heads/test', sha});
+      expect(await Git.fullCommit(cwd)).toEqual(sha);
+      expect(await Git.shortCommit(cwd)).toEqual(git(['rev-parse', '--short', 'HEAD']));
+      expect(await Git.commitDate(sha, cwd)).toEqual(new Date(commitDate));
+      expect(await Git.tag(cwd)).toEqual('v1.0.0');
+
+      git(['checkout', '--detach', 'HEAD']);
+      expect(await Git.context(cwd)).toMatchObject({ref: 'refs/tags/v1.0.0', sha});
+
+      git(['checkout', 'test']);
+      commit('second');
+      expect(await Git.tag(cwd)).toEqual('v1.0.0');
+      const detachedSha = git(['rev-parse', 'HEAD']);
+      commit('third');
+      git(['tag', 'v2.0.0']);
+      git(['checkout', '--detach', detachedSha]);
+      expect(await Git.context(cwd)).toMatchObject({ref: 'refs/heads/test', sha: detachedSha});
+
+      git(['update-ref', 'refs/remotes/origin/test', 'refs/heads/test']);
+      git(['branch', '-D', 'test']);
+      expect(await Git.context(cwd)).toMatchObject({ref: 'refs/heads/test', sha: detachedSha});
+
+      git(['update-ref', '-d', 'refs/remotes/origin/test']);
+      expect(await Git.context(cwd)).toMatchObject({ref: 'refs/tags/v2.0.0', sha: detachedSha});
+    },
+    30000
+  );
 });
 
 describe('isInsideWorkTree', () => {
