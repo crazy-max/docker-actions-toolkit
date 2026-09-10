@@ -16,6 +16,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import {stripVTControlCharacters} from 'util';
 import * as core from '@actions/core';
 import * as semver from 'semver';
 
@@ -131,6 +132,19 @@ export class Buildx {
       throw new Error(`Cannot parse buildx version`);
     }
     return matches[1];
+  }
+
+  public static getErrorMessage(stderr: string): string {
+    const lines = stripVTControlCharacters(stderr).split(/[\r\n]/);
+    let lastLine = '';
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i].trim();
+      if (line.startsWith('ERROR:')) {
+        return line.slice('ERROR:'.length).trim() || 'unknown error';
+      }
+      lastLine ||= line;
+    }
+    return lastLine || 'unknown error';
   }
 
   public async versionSatisfies(range: string, version?: string): Promise<boolean> {
