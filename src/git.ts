@@ -198,7 +198,8 @@ export class Git {
       return `refs/tags/${firstTag}`;
     }
 
-    throw new Error(`Cannot infer ref from detached HEAD`);
+    // A detached SHA checkout can have no named refs, especially with a shallow fetch.
+    return '';
   }
 
   private static async findDetachedTagRef(tagDecoration: string, originalRef: string): Promise<string> {

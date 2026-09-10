@@ -14,6 +14,10 @@
  * limitations under the License.
  */
 
+import {execFileSync} from 'child_process';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
 
 import {Git} from '../src/git.js';
@@ -49,6 +53,41 @@ describe('context', () => {
     const ctx = await Git.context();
     expect(ctx.ref).toEqual('refs/heads/test');
     expect(ctx.sha).toEqual('test-sha');
+  });
+
+  it('returns the SHA without a named ref for a shallow SHA checkout', async () => {
+    const tmpDir = fs.mkdtempSync(path.join(process.env.TEMP || os.tmpdir(), 'git-context-'));
+    const sourceDir = path.join(tmpDir, 'source');
+    const checkoutDir = path.join(tmpDir, 'checkout');
+    const git = (cwd: string, args: string[]) => execFileSync('git', args, {cwd, encoding: 'utf8', stdio: 'pipe'}).trim();
+
+    git(tmpDir, ['init', sourceDir]);
+    for (const message of ['initial', 'second']) {
+      git(sourceDir, ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-m', message]);
+    }
+    const sha = git(sourceDir, ['rev-parse', 'HEAD']);
+    git(tmpDir, ['init', checkoutDir]);
+    git(checkoutDir, ['fetch', '--depth=1', '--no-tags', sourceDir, sha]);
+    git(checkoutDir, ['checkout', '--detach', 'FETCH_HEAD']);
+
+    expect(git(checkoutDir, ['rev-parse', '--is-shallow-repository'])).toEqual('true');
+    expect(git(checkoutDir, ['for-each-ref', '--format=%(refname)'])).toEqual('');
+
+    const getExecOutput = Exec.getExecOutput;
+    vi.spyOn(Exec, 'getExecOutput').mockImplementation((cmd, args, options) => getExecOutput(cmd, args, {...options, cwd: checkoutDir}));
+
+    const ctx = await Git.context();
+    expect(ctx.ref).toEqual('');
+    expect(ctx.sha).toEqual(sha);
+  });
+
+  it('propagates Git command failures during ref inference', async () => {
+    vi.spyOn(Exec, 'getExecOutput')
+      .mockResolvedValueOnce({stdout: '', stderr: '', exitCode: 0})
+      .mockResolvedValueOnce({stdout: 'grafted, HEAD', stderr: '', exitCode: 0})
+      .mockResolvedValueOnce({stdout: '', stderr: 'fatal: failed to read refs', exitCode: 128});
+
+    await expect(Git.context()).rejects.toThrow('fatal: failed to read refs');
   });
 });
 
@@ -357,7 +396,7 @@ describe('ref', () => {
     expect(ref).toEqual('refs/tags/v1.0.0');
   });
 
-  it('throws error when cannot infer ref from detached HEAD', async () => {
+  it.each(['HEAD', 'grafted, HEAD'])('returns an empty ref when no ref contains detached %s', async decoration => {
     vi.spyOn(Exec, 'getExecOutput').mockImplementation((cmd, args): Promise<ExecOutput> => {
       const fullCmd = `${cmd} ${args?.join(' ')}`;
       let result = '';
@@ -366,7 +405,7 @@ describe('ref', () => {
           result = '';
           break;
         case 'git show -s --pretty=%D':
-          result = 'HEAD';
+          result = decoration;
           break;
         case 'git for-each-ref --format=%(refname) --contains HEAD --sort=-committerdate refs/heads/':
           result = '';
@@ -384,7 +423,7 @@ describe('ref', () => {
         exitCode: 0
       });
     });
-    await expect(Git.ref()).rejects.toThrow('Cannot infer ref from detached HEAD');
+    expect(await Git.ref()).toEqual('');
   });
 
   it('handles remote ref without branch pattern when inferring from remote', async () => {
