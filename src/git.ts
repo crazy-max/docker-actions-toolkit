@@ -22,15 +22,15 @@ import {GitHub} from './github/github.js';
 export type GitContext = typeof github.context;
 
 export class Git {
-  public static async context(): Promise<GitContext> {
+  public static async context(cwd?: string): Promise<GitContext> {
     const ctx = {...github.context} as GitContext;
-    ctx.ref = await Git.ref();
-    ctx.sha = await Git.fullCommit();
+    ctx.ref = await Git.ref(cwd);
+    ctx.sha = await Git.fullCommit(cwd);
     return ctx;
   }
 
-  public static async isInsideWorkTree(): Promise<boolean> {
-    return await Git.exec(['rev-parse', '--is-inside-work-tree'])
+  public static async isInsideWorkTree(cwd?: string): Promise<boolean> {
+    return await Git.exec(['rev-parse', '--is-inside-work-tree'], cwd)
       .then(out => {
         return out === 'true';
       })
@@ -71,10 +71,10 @@ export class Git {
     });
   }
 
-  public static async remoteURL(): Promise<string> {
-    return await Git.exec(['remote', 'get-url', 'origin']).then(rurl => {
+  public static async remoteURL(cwd?: string): Promise<string> {
+    return await Git.exec(['remote', 'get-url', 'origin'], cwd).then(rurl => {
       if (rurl.length == 0) {
-        return Git.exec(['remote', 'get-url', 'upstream']).then(rurl => {
+        return Git.exec(['remote', 'get-url', 'upstream'], cwd).then(rurl => {
           if (rurl.length == 0) {
             throw new Error(`Cannot find remote URL for origin or upstream`);
           }
@@ -85,46 +85,46 @@ export class Git {
     });
   }
 
-  public static async ref(): Promise<string> {
-    const isHeadDetached = await Git.isHeadDetached();
+  public static async ref(cwd?: string): Promise<string> {
+    const isHeadDetached = await Git.isHeadDetached(cwd);
     if (isHeadDetached) {
-      return await Git.getDetachedRef();
+      return await Git.getDetachedRef(cwd);
     }
 
-    return await Git.exec(['symbolic-ref', 'HEAD']);
+    return await Git.exec(['symbolic-ref', 'HEAD'], cwd);
   }
 
-  public static async fullCommit(): Promise<string> {
-    return await Git.exec(['show', '--format=%H', 'HEAD', '--quiet', '--']);
+  public static async fullCommit(cwd?: string): Promise<string> {
+    return await Git.exec(['show', '--format=%H', 'HEAD', '--quiet', '--'], cwd);
   }
 
-  public static async shortCommit(): Promise<string> {
-    return await Git.exec(['show', '--format=%h', 'HEAD', '--quiet', '--']);
+  public static async shortCommit(cwd?: string): Promise<string> {
+    return await Git.exec(['show', '--format=%h', 'HEAD', '--quiet', '--'], cwd);
   }
 
-  public static async tag(): Promise<string> {
-    return await Git.exec(['tag', '--points-at', 'HEAD', '--sort', '-version:creatordate']).then(tags => {
+  public static async tag(cwd?: string): Promise<string> {
+    return await Git.exec(['tag', '--points-at', 'HEAD', '--sort', '-version:creatordate'], cwd).then(tags => {
       if (tags.length == 0) {
-        return Git.exec(['describe', '--tags', '--abbrev=0']);
+        return Git.exec(['describe', '--tags', '--abbrev=0'], cwd);
       }
       return tags.split('\n')[0];
     });
   }
 
-  private static async isHeadDetached(): Promise<boolean> {
-    return await Git.exec(['branch', '--show-current']).then(res => {
+  private static async isHeadDetached(cwd?: string): Promise<boolean> {
+    return await Git.exec(['branch', '--show-current'], cwd).then(res => {
       return res.length == 0;
     });
   }
 
-  private static async getDetachedRef(): Promise<string> {
-    const res = await Git.exec(['show', '-s', '--pretty=%D']);
+  private static async getDetachedRef(cwd?: string): Promise<string> {
+    const res = await Git.exec(['show', '-s', '--pretty=%D'], cwd);
     core.debug(`detached HEAD ref: ${res}`);
 
     const normalizedRef = res.replace(/^grafted, /, '').trim();
 
     if (normalizedRef === 'HEAD') {
-      return await Git.inferRefFromHead();
+      return await Git.inferRefFromHead(cwd);
     }
 
     // Can be "HEAD, <tagname>" or "grafted, HEAD, <tagname>"
@@ -138,7 +138,7 @@ export class Git {
 
     // Tag refs are formatted as "tag: <tagname>"
     if (ref.startsWith('tag: ')) {
-      return await Git.findDetachedTagRef(ref, res);
+      return await Git.findDetachedTagRef(ref, res, cwd);
     }
 
     // Pull request merge refs are formatted as "pull/<number>/<state>"
@@ -162,8 +162,9 @@ export class Git {
     throw new Error(`Unsupported detached HEAD ref in "${res}"`);
   }
 
-  private static async exec(args: string[] = []): Promise<string> {
+  private static async exec(args: string[] = [], cwd?: string): Promise<string> {
     return await Exec.getExecOutput(`git`, args, {
+      cwd,
       ignoreReturnCode: true,
       silent: true
     }).then(res => {
@@ -174,13 +175,13 @@ export class Git {
     });
   }
 
-  private static async inferRefFromHead(): Promise<string> {
-    const localRef = await Git.findContainingRef('refs/heads/');
+  private static async inferRefFromHead(cwd?: string): Promise<string> {
+    const localRef = await Git.findContainingRef('refs/heads/', cwd);
     if (localRef) {
       return localRef;
     }
 
-    const remoteRef = await Git.findContainingRef('refs/remotes/');
+    const remoteRef = await Git.findContainingRef('refs/remotes/', cwd);
     if (remoteRef) {
       const remoteMatch = remoteRef.match(/^refs\/remotes\/[^/]+\/(.+)$/);
       if (remoteMatch) {
@@ -189,7 +190,7 @@ export class Git {
       return remoteRef;
     }
 
-    const tagRef = await Git.exec(['tag', '--contains', 'HEAD']);
+    const tagRef = await Git.exec(['tag', '--contains', 'HEAD'], cwd);
     const [firstTag] = tagRef
       .split('\n')
       .map(tag => tag.trim())
@@ -202,8 +203,8 @@ export class Git {
     return '';
   }
 
-  private static async findDetachedTagRef(tagDecoration: string, originalRef: string): Promise<string> {
-    const tagRefs = await Git.exec(['for-each-ref', '--format=%(refname)', '--points-at', 'HEAD', 'refs/tags/']);
+  private static async findDetachedTagRef(tagDecoration: string, originalRef: string, cwd?: string): Promise<string> {
+    const tagRefs = await Git.exec(['for-each-ref', '--format=%(refname)', '--points-at', 'HEAD', 'refs/tags/'], cwd);
     const refs = tagRefs
       .split('\n')
       .map(tagRef => tagRef.trim())
@@ -224,8 +225,8 @@ export class Git {
     throw new Error(`Cannot find detached tag ref in "${originalRef}"`);
   }
 
-  private static async findContainingRef(scope: string): Promise<string | undefined> {
-    const refs = await Git.exec(['for-each-ref', '--format=%(refname)', '--contains', 'HEAD', '--sort=-committerdate', scope]);
+  private static async findContainingRef(scope: string, cwd?: string): Promise<string | undefined> {
+    const refs = await Git.exec(['for-each-ref', '--format=%(refname)', '--contains', 'HEAD', '--sort=-committerdate', scope], cwd);
 
     const [first] = refs
       .split('\n')
@@ -234,7 +235,7 @@ export class Git {
     return first;
   }
 
-  public static async commitDate(ref: string): Promise<Date> {
-    return new Date(await Git.exec(['show', '-s', '--format="%ci"', ref]));
+  public static async commitDate(ref: string, cwd?: string): Promise<Date> {
+    return new Date(await Git.exec(['show', '-s', '--format="%ci"', ref], cwd));
   }
 }
