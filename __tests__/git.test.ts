@@ -73,6 +73,9 @@ describe('context', () => {
     expect(git(checkoutDir, ['rev-parse', '--is-shallow-repository'])).toEqual('true');
     expect(git(checkoutDir, ['for-each-ref', '--format=%(refname)'])).toEqual('');
 
+    expect(await Git.commitCount(sourceDir)).toEqual(2);
+    expect(await Git.commitCount(checkoutDir)).toEqual(1);
+
     const getExecOutput = Exec.getExecOutput;
     vi.spyOn(Exec, 'getExecOutput').mockImplementation((cmd, args, options) => getExecOutput(cmd, args, {...options, cwd: checkoutDir}));
 
@@ -128,6 +131,7 @@ describe('working directory', () => {
       expect(await Git.remoteURL(cwd)).toEqual('https://example.com/selected-repo.git');
       expect(await Git.context(cwd)).toMatchObject({ref: 'refs/heads/test', sha});
       expect(await Git.fullCommit(cwd)).toEqual(sha);
+      expect(await Git.commitCount(cwd)).toEqual(1);
       expect(await Git.shortCommit(cwd)).toEqual(git(['rev-parse', '--short', 'HEAD']));
       expect(await Git.commitDate(sha, cwd)).toEqual(new Date(commitDate));
       expect(await Git.tag(cwd)).toEqual('v1.0.0');
@@ -137,11 +141,14 @@ describe('working directory', () => {
 
       git(['checkout', 'test']);
       commit('second');
+      expect(await Git.commitCount(cwd)).toEqual(2);
       expect(await Git.tag(cwd)).toEqual('v1.0.0');
       const detachedSha = git(['rev-parse', 'HEAD']);
       commit('third');
+      expect(await Git.commitCount(cwd)).toEqual(3);
       git(['tag', 'v2.0.0']);
       git(['checkout', '--detach', detachedSha]);
+      expect(await Git.commitCount(cwd)).toEqual(2);
       expect(await Git.context(cwd)).toMatchObject({ref: 'refs/heads/test', sha: detachedSha});
 
       git(['update-ref', 'refs/remotes/origin/test', 'refs/heads/test']);
@@ -621,6 +628,23 @@ describe('shortCommit', () => {
       silent: true,
       ignoreReturnCode: true
     });
+  });
+});
+
+describe('commitCount', () => {
+  it('counts HEAD in the current working directory by default', async () => {
+    const execSpy = vi.spyOn(Exec, 'getExecOutput').mockResolvedValue({stdout: '42\n', stderr: '', exitCode: 0});
+    expect(await Git.commitCount()).toEqual(42);
+    expect(execSpy).toHaveBeenCalledWith('git', ['rev-list', '--count', 'HEAD', '--'], {
+      cwd: undefined,
+      silent: true,
+      ignoreReturnCode: true
+    });
+  });
+
+  it('propagates Git command failures', async () => {
+    vi.spyOn(Exec, 'getExecOutput').mockResolvedValue({stdout: '', stderr: 'fatal: bad revision HEAD', exitCode: 128});
+    await expect(Git.commitCount()).rejects.toThrow('fatal: bad revision HEAD');
   });
 });
 

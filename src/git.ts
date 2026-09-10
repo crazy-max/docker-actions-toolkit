@@ -102,6 +102,10 @@ export class Git {
     return await Git.exec(['show', '--format=%h', 'HEAD', '--quiet', '--'], cwd);
   }
 
+  public static async commitCount(cwd?: string): Promise<number> {
+    return Number(await Git.exec(['rev-list', '--count', 'HEAD', '--'], cwd));
+  }
+
   public static async tag(cwd?: string): Promise<string> {
     return await Git.exec(['tag', '--points-at', 'HEAD', '--sort', '-version:creatordate'], cwd).then(tags => {
       if (tags.length == 0) {
