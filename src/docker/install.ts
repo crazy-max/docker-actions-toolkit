@@ -395,8 +395,8 @@ export class Install {
       let dockerPath = `${this.toolDir}/dockerd`;
       if (this.rootless) {
         dockerPath = `${this.toolDir}/dockerd-rootless.sh`;
-        if (fs.existsSync('/proc/sys/kernel/apparmor_restrict_unprivileged_userns')) {
-          await Exec.exec('sudo', ['sh', '-c', 'echo 0 > /proc/sys/kernel/apparmor_restrict_unprivileged_userns']);
+        if (process.env.RUNNER_ENVIRONMENT === 'github-hosted' && fs.existsSync('/proc/sys/kernel/apparmor_restrict_unprivileged_userns') && (await io.which('sudo', false))) {
+          await Exec.exec('sudo', ['-n', 'sh', '-c', 'echo 0 > /proc/sys/kernel/apparmor_restrict_unprivileged_userns'], {ignoreReturnCode: true});
         }
       }
       let cmd = `${dockerPath} --host="${dockerHost}" --config-file="${daemonConfigPath}" --exec-root="${this.runDir}/execroot" --data-root="${this.runDir}/data" --pidfile="${this.runDir}/docker.pid"`;
@@ -404,16 +404,13 @@ export class Install {
         cmd += ` --host="tcp://127.0.0.1:${this.localTCPPort}"`;
       }
       core.info(`[command] ${cmd}`); // https://github.com/actions/toolkit/blob/3d652d3133965f63309e4b2e1c8852cdbdcb3833/packages/exec/src/toolrunner.ts#L47
-      let sudo = 'sudo';
-      if (this.rootless) {
-        sudo += ' -u \\#1001';
-      }
+      const sudo = this.rootless ? '' : 'sudo ';
       const proc = await child_process.spawn(
         // We can't use Exec.exec here because we need to detach the process to
         // avoid killing it when the action finishes running. Even if detached,
         // we also need to run dockerd in a subshell and unref the process so
         // GitHub Action doesn't wait for it to finish.
-        `${sudo} env "PATH=$PATH" "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" ${bashPath} << EOF
+        `${sudo}env "PATH=$PATH" "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" ${bashPath} << EOF
 ( ${cmd} 2>&1 | tee "${this.runDir}/dockerd.log" ) &
 EOF`,
         [],
@@ -588,17 +585,21 @@ EOF`,
 
   private async tearDownLinux(): Promise<void> {
     await core.group('Docker daemon logs', async () => {
-      await Exec.exec('sudo', ['cat', path.join(this.runDir, 'dockerd.log')], {ignoreReturnCode: true});
+      const args = [path.join(this.runDir, 'dockerd.log')];
+      await Exec.exec(this.rootless ? 'cat' : 'sudo', this.rootless ? args : ['cat', ...args], {ignoreReturnCode: true});
     });
     await core.group('Stopping Docker daemon', async () => {
-      await Exec.exec('sudo', ['kill', '-s', 'SIGTERM', fs.readFileSync(path.join(this.runDir, 'docker.pid')).toString().trim()]);
+      const args = ['-s', 'SIGTERM', fs.readFileSync(path.join(this.runDir, 'docker.pid')).toString().trim()];
+      await Exec.exec(this.rootless ? 'kill' : 'sudo', this.rootless ? args : ['kill', ...args]);
       await Util.sleep(5);
     });
     await core.group('Removing Docker context', async () => {
       await Docker.exec(['context', 'rm', '-f', this.contextName]);
     });
     await core.group(`Cleaning up runDir`, async () => {
-      await Exec.exec('sudo', ['rm', '-rf', this.runDir], {
+      // Rootless image files can be owned by subordinate UIDs, so remove them
+      // inside the same user namespace mapping used by the daemon.
+      await Exec.exec(this.rootless ? 'rootlesskit' : 'sudo', ['rm', '-rf', this.runDir], {
         ignoreReturnCode: true,
         failOnStdErr: false
       });
