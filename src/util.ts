@@ -106,16 +106,17 @@ export class Util {
 
   public static async powershellCommand(script: string, params?: Record<string, string>) {
     const powershellPath: string = await io.which('powershell', true);
-    const escapedScript = script.replace(/'/g, "''").replace(/"|\n|\r/g, '');
+    const escapedScript = script.replace(/'/g, "''");
     const escapedParams: string[] = [];
     if (params) {
       for (const key in params) {
-        escapedParams.push(`-${key} '${params[key].replace(/'/g, "''").replace(/"|\n|\r/g, '')}'`);
+        escapedParams.push(`-${key} '${params[key].replace(/'/g, "''")}'`);
       }
     }
     return {
       command: `"${powershellPath}"`,
-      args: ['-NoLogo', '-Sta', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Unrestricted', '-Command', `& '${escapedScript}' ${escapedParams.join(' ')}`]
+      // Encode the invocation so Windows command-line parsing cannot alter its quotes.
+      args: ['-NoLogo', '-Sta', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Unrestricted', '-EncodedCommand', Buffer.from(`& '${escapedScript}' ${escapedParams.join(' ')}`, 'utf16le').toString('base64')]
     };
   }
 

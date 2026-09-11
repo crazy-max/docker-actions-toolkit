@@ -17,8 +17,41 @@
 import {describe, expect, it, test} from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 
 import {Util} from '../src/util.js';
+import {Exec} from '../src/exec.js';
+
+describe.skipIf(process.platform !== 'win32')('powershellCommand', () => {
+  it('preserves JSON and literal parameter values through Windows PowerShell', async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'powershell-command-'));
+    const script = path.join(tmpDir, "runner's script.ps1");
+    const output = path.join(tmpDir, 'output.json');
+    const config = JSON.stringify({experimental: true, features: {'containerd-snapshotter': true}, labels: ["owner=runner's", 'literal=$env:PATH ` " café']}, null, 2);
+    fs.writeFileSync(script, 'param([string]$DaemonConfig, [string]$OutputPath)\n[System.IO.File]::WriteAllText($OutputPath, $DaemonConfig)');
+    try {
+      const cmd = await Util.powershellCommand(script, {DaemonConfig: config, OutputPath: output});
+      await Exec.exec(cmd.command, cmd.args, {silent: true});
+      expect(fs.readFileSync(output, 'utf8')).toBe(config);
+      expect(JSON.parse(fs.readFileSync(output, 'utf8'))).toEqual(JSON.parse(config));
+    } finally {
+      fs.rmSync(tmpDir, {recursive: true, force: true});
+    }
+  });
+
+  it('runs scripts without parameters', async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'powershell-command-'));
+    const script = path.join(tmpDir, 'script.ps1');
+    fs.writeFileSync(script, "[Console]::Write('ok')");
+    try {
+      const cmd = await Util.powershellCommand(script);
+      const result = await Exec.getExecOutput(cmd.command, cmd.args, {silent: true});
+      expect(result.stdout).toBe('ok');
+    } finally {
+      fs.rmSync(tmpDir, {recursive: true, force: true});
+    }
+  });
+});
 
 describe('getInputList', () => {
   it('single line correctly', async () => {
