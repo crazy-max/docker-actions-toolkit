@@ -61,9 +61,10 @@ describe('rootless', () => {
         return;
       }
       await ensureNoSystemContainerd();
+      const runDir = tmpDir();
       const install = new Install({
         source: source,
-        runDir: tmpDir(),
+        runDir: runDir,
         contextName: 'foo',
         daemonConfig: `{"debug":true}`,
         rootless: true
@@ -74,8 +75,10 @@ describe('rootless', () => {
           expect(out.exitCode).toBe(0);
           expect(out.stderr.trim()).toBe('');
           expect(out.stdout.trim()).toContain('rootless');
+          expect(fs.statSync(path.join(runDir, 'docker.pid')).uid).toBe(os.userInfo().uid);
         })
       ).resolves.not.toThrow();
+      expect(fs.existsSync(runDir)).toBe(false);
     },
     30 * 60 * 1000
   );
