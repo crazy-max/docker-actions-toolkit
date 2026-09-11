@@ -34,6 +34,7 @@ jobs:
           - cosign
           - regctl
           - undock
+          - lima
     steps:
       -
         name: GitHub auth token from GitHub App
@@ -279,6 +280,59 @@ jobs:
                       }
                     ]
                   };
+                }
+              },
+              lima: {
+                name: 'Lima images',
+                branch: 'deps/lima-images',
+                sourceUrl: 'https://github.com/lima-vm/lima/blob/master/templates/_images/ubuntu-24.04.yaml',
+                async resolve({github}) {
+                  const {data} = await github.rest.repos.getContent({
+                    owner: 'lima-vm',
+                    repo: 'lima',
+                    path: 'templates/_images/ubuntu-24.04.yaml',
+                    ref: 'master'
+                  });
+                  const template = Buffer.from(data.content, 'base64').toString('utf8');
+                  const baseUrl = 'https://cloud-images.ubuntu.com/releases/noble/';
+                  const release = template.match(new RegExp(`${escapeRegExp(baseUrl)}release-(\\d{8})/ubuntu-24\\.04-server-cloudimg-amd64\\.img`))?.[1];
+                  if (!release) {
+                    throw new Error('Unable to resolve the pinned Ubuntu 24.04 release from Lima');
+                  }
+
+                  const targets = [];
+                  for (const [directory, filenames] of [
+                    ['', ['ubuntu-24.04-server-cloudimg-amd64.img', 'ubuntu-24.04-server-cloudimg-arm64.img']],
+                    ['unpacked/', ['ubuntu-24.04-server-cloudimg-amd64-vmlinuz-generic', 'ubuntu-24.04-server-cloudimg-amd64-initrd-generic']]
+                  ]) {
+                    const response = await fetch(`${baseUrl}release-${release}/${directory}SHA256SUMS`);
+                    if (!response.ok) {
+                      throw new Error(`Unable to fetch Ubuntu checksums: ${response.status} ${response.statusText}`);
+                    }
+                    const checksums = await response.text();
+                    for (const filename of filenames) {
+                      const digest = checksums.match(new RegExp(`^([a-f0-9]{64}) [ *]${escapeRegExp(filename)}\\r?$`, 'm'))?.[1];
+                      if (!digest) {
+                        throw new Error(`Missing Ubuntu checksum for ${filename}`);
+                      }
+                      const locationPattern = `${escapeRegExp(baseUrl)}release-\\d{8}/${escapeRegExp(directory + filename)}`;
+                      targets.push(
+                        {
+                          path: 'src/docker/assets.ts',
+                          key: `${filename} location`,
+                          value: `${baseUrl}release-${release}/${directory}${filename}`,
+                          pattern: new RegExp(`(location: ")(${locationPattern})(")`)
+                        },
+                        {
+                          path: 'src/docker/assets.ts',
+                          key: `${filename} digest`,
+                          value: `sha256:${digest}`,
+                          pattern: new RegExp(`(location: "${locationPattern}"\\r?\\n(?:  arch: "[^"]+"\\r?\\n)? +digest: ")([^"]+)(")`)
+                        }
+                      );
+                    }
+                  }
+                  return {titleValue: release, targets};
                 }
               },
               regctl: {
